@@ -967,7 +967,7 @@ colors derived from voxel ids.
 - **`poissonDisk`** *(function)* — Poisson-disk 2D sampling (Bridson): points with a guaranteed minimum.
 
   ```ts
-  function poissonDisk({ width, height, minDist, rng, k, }: PoissonDiskOptions): Point2[];
+  function poissonDisk({ width, height, minDist, rng, k }: PoissonDiskOptions): Point2[];
   ```
   - `options` — Region `width`/`height`, `minDist` spacing, seeded `rng`,
 and `k` candidate attempts per sample (default 30).
@@ -1084,11 +1084,12 @@ environment scene's geometry is freed immediately).
   ```ts
   function bakeCurveTexture(color: ColorCurve, alpha: ScalarCurve, size: ScalarCurve, resolution?: number): THREE.DataTexture;
   ```
-- **`createBlockDisplacementPass`** *(function)* — Create a ShaderPass that displaces and swaps colour channels in pseudo-random blocks for a datamosh glitch effect.
+- **`createBlockDisplacementPass`** *(function)* — Create a glitch pass that displaces and swaps colour channels in pseudo-random blocks.
 
   ```ts
   function createBlockDisplacementPass(): ShaderPass;
   ```
+  - returns — A ShaderPass whose `uIntensity` (default `0.5`) and `uBlockSize` (default `32`) uniforms control the block corruption.
 - **`createCameraController`** *(function)* — Multi-mode camera state machine: `free`, `flyTo`, `follow`, and `cockpit`.
 
   ```ts
@@ -1111,16 +1112,35 @@ environment scene's geometry is freed immediately).
   ```ts
   function createCinematicLUT(size?: number, { contrast, splitTone, saturation }?: CinematicLutOptions): THREE.Data3DTexture;
   ```
-- **`createComposer`** *(function)* — Create an EffectComposer wired with RenderPass and OutputPass, optionally adding a DepthTexture and UnrealBloomPass.
+- **`createComposer`** *(function)* — Build an EffectComposer wired with a RenderPass and an OutputPass, optionally creating a shared DepthTexture and an UnrealBloomPass.
 
   ```ts
   function createComposer({ renderer, scene, camera, width, height, withDepth, withBloom, bloomStrength, bloomRadius, bloomThreshold, }: ComposerOptions): ComposerHandle;
   ```
-- **`createDofPass`** *(function)* — Create a ShaderPass that applies depth-of-field blur modulated by circle-of-confusion, with radial chromatic separation.
+  - `options` — Renderer, scene, camera, viewport size, and optional bloom/depth flags.
+  - `options.renderer` — The WebGL2 renderer that owns the composer render targets.
+  - `options.scene` — Scene to render each frame.
+  - `options.camera` — Active camera.
+  - `options.width` — Viewport width in pixels.
+  - `options.height` — Viewport height in pixels.
+  - `options.withDepth` — Attach a DepthTexture to both render targets for depth-sampling passes (DOF, god rays).
+  - `options.withBloom` — Insert an UnrealBloomPass after the RenderPass.
+  - `options.bloomStrength` — Bloom intensity.
+  - `options.bloomRadius` — Bloom spread.
+  - `options.bloomThreshold` — Luminance threshold for blooming.
+  - returns — A ComposerHandle with the built chain — the canonical order is RenderPass, UnrealBloomPass, custom passes, OutputPass.
+- **`createDofPass`** *(function)* — Create a combined depth-of-field and chromatic-aberration pass that blurs fragments by distance from a focal plane and splits RGB channels around the circle of confusion.
 
   ```ts
   function createDofPass({ focalDistance, focalRange, maxBlur, caStrength, near, far, }?: DofPassOptions): DofPass;
   ```
+  - `options.focalDistance` — World-space distance to the focal plane. Default `10`.
+  - `options.focalRange` — Depth range over which blur ramps from zero to maximum. Default `4`.
+  - `options.maxBlur` — Maximum blur radius as a fraction of screen width. Default `0.015`.
+  - `options.caStrength` — Intensity of radial chromatic separation modulated by the circle of confusion. Default `0.5`.
+  - `options.near` — Near clip-plane distance for depth linearisation. Default `0.1`.
+  - `options.far` — Far clip-plane distance for depth linearisation. Default `200`.
+  - returns — A DofPass. Call `focusOn(worldPos, camera)` each frame to dynamically set the focal distance from a world-space point.
 - **`createEmitter`** *(function)* — CPU-simulated billboard particle emitter: a fixed-capacity `Points` cloud.
 
   ```ts
@@ -1138,11 +1158,15 @@ spawn shape, motion, and appearance curves.
   loop.onFrame(ctx => smoke.tick(ctx))
   ```
   </details>
-- **`createFilmGrainPass`** *(function)* — Create a ShaderPass that applies procedural per-fragment film grain with optional luminance-only mode and desaturation.
+- **`createFilmGrainPass`** *(function)* — Create a procedural film-grain pass that adds per-fragment noise to the frame.
 
   ```ts
   function createFilmGrainPass({ intensity, luma, desat, }?: FilmGrainOptions): ShaderPass;
   ```
+  - `options.intensity` — Magnitude of the grain offset. Default `0.08`.
+  - `options.luma` — Blend between colour grain (0) and luminance-only grain (1). Default `0.5`.
+  - `options.desat` — Desaturation amount applied after grain; 0 = full colour, 1 = greyscale. Default `0`.
+  - returns — A ShaderPass that composites grain over the input colour.
 - **`createFollowCamera`** *(function)* — Chase camera: keeps `offset` in the target's local frame and looks at a.
 
   ```ts
@@ -1153,11 +1177,12 @@ spawn shape, motion, and appearance curves.
   - `options` — Offset (required), look-ahead, and stiffness tuning.
   - returns — A `CameraController` locked to follow mode; call `update(ctx)`
 every frame.
-- **`createGodRaysPass`** *(function)* — Create a GodRaysPass that ray-marches from each fragment toward the light's screen-space position, accumulating scattered brightness (GPU Gems 3 ch.13 algorithm).
+- **`createGodRaysPass`** *(function)* — Create a volumetric light-shaft pass using the GPU Gems 3 ch.13 radial-scattering algorithm (Mitchell light-shaft).
 
   ```ts
   function createGodRaysPass(): GodRaysPass;
   ```
+  - returns — A GodRaysPass. Call `updateFromLight(worldPos, camera)` each frame to project a world-space light onto the screen (disables the pass when the light is behind camera). Optionally bind a dedicated occlusion buffer via `setOcclusionTexture(texture)`.
 - **`createGpuEmitter`** *(function)* — GPGPU particle emitter: position and velocity live in float textures.
 
   ```ts
@@ -1167,21 +1192,33 @@ every frame.
   - `options` — Same appearance/motion contract as the CPU emitter.
   - returns — An Emitter; `burst`/`setRate` are no-ops — particles
 respawn continuously as their lifetime wraps.
-- **`createGradePass`** *(function)* — Create a ShaderPass that applies tint, contrast, saturation, vignette, seeded grain, and radial chromatic aberration in linear HDR.
+- **`createGradePass`** *(function)* — Create a colour-grade pass that applies tint, contrast, saturation, vignette, seeded grain, and radial chromatic aberration in linear HDR.
 
   ```ts
   function createGradePass({ tint, contrast, saturation, vignette, grain, chromatic, }?: GradePassOptions): GradePass;
   ```
+  - `options.tint` — Colour tint as a THREE.ColorRepresentation. Default `#ffffff`.
+  - `options.contrast` — S-curve contrast pivot about mid-grey. Default `1.05`.
+  - `options.saturation` — Colour saturation multiplier. Default `1.1`.
+  - `options.vignette` — Soft radial vignette strength. Default `0.35`.
+  - `options.grain` — Seeded grain amplitude. Default `0.04`.
+  - `options.chromatic` — Radial chromatic-aberration strength that grows toward the corners. Default `0.6`.
+  - returns — A GradePass whose `setTime(elapsed)` updates the grain seed each frame.
 - **`createHemisphereFill`** *(function)* — Soft ambient fill: a `HemisphereLight` blending sky and ground bounce colors (defaults: cool sky, warm earth, 0.4).
 
   ```ts
   function createHemisphereFill({ skyColor, groundColor, intensity, }?: HemisphereFillOptions): THREE.HemisphereLight;
   ```
-- **`createHudBeamTransition`** *(function)* — Create a horizontal beam-sweep transition that reveals content with RGB-split fringes.
+- **`createHudBeamTransition`** *(function)* — Create a horizontal beam-sweep transition that reveals content beneath an RGB-split luminous beam.
 
   ```ts
   function createHudBeamTransition({ duration, beamWidth, beamColor, onComplete, }?: HudBeamOptions): HudBeamTransition;
   ```
+  - `options.duration` — Sweep duration in seconds. Default `0.9`.
+  - `options.beamWidth` — Width of the luminous beam as a fraction of screen width. Default `0.08`.
+  - `options.beamColor` — Beam tint colour. Default `#79f7ff`.
+  - `options.onComplete` — Callback fired when the sweep reaches completion (progress >= 1).
+  - returns — A HudBeamTransition. Call `play(onMidpoint?)` to start the sweep; call `tick(delta, time)` each frame to advance. The `onMidpoint` fires when progress crosses 0.5 — the ideal frame to swap content.
 - **`createIsoCamera`** *(function)* — Orthographic isometric camera: positioned on a 45°-yaw tilted orbit and.
 
   ```ts
@@ -1227,26 +1264,41 @@ respawn continuously as their lifetime wraps.
   - `element` — Element whose pointer movement drives look-around.
   - `options` — Ranges, smoothing, and speed.
   - returns — A PathCamera; call `update(ctx)` once per frame.
-- **`createPostPipeline`** *(function)* — Create a PostPipeline with a named-pass registry.
+- **`createPostPipeline`** *(function)* — Create a reorderable named-pass pipeline over EffectComposer.
 
   ```ts
   function createPostPipeline({ renderer, scene, camera, width, height, withDepth, }: PostPipelineOptions): PostPipeline;
   ```
-- **`createRgbShiftPass`** *(function)* — Create a ShaderPass that separates RGB channels along a configurable angle for a chromatic glitch effect.
+  - `options.renderer` — The WebGL2 renderer.
+  - `options.scene` — Scene to render.
+  - `options.camera` — Active camera.
+  - `options.width` — Viewport width in pixels.
+  - `options.height` — Viewport height in pixels.
+  - `options.withDepth` — Attach a shared DepthTexture to both render targets. Default `false`.
+  - returns — A PostPipeline. Register passes with `register(name, pass)`, reorder with `setOrder(names)`, and toggle enablement with `setEnabled(flags)`. RenderPass stays first and OutputPass stays last automatically.
+- **`createRgbShiftPass`** *(function)* — Create a glitch pass that separates the RGB channels along a configurable angle.
 
   ```ts
   function createRgbShiftPass(): ShaderPass;
   ```
-- **`createScanCorruptionPass`** *(function)* — Create a ShaderPass that adds horizontal scan-line jitter and brightness spikes for a corrupt-signal glitch effect.
+  - returns — A ShaderPass whose `uIntensity` (default `0.5`) and `uAngle` uniforms control the shift magnitude and direction.
+- **`createScanCorruptionPass`** *(function)* — Create a glitch pass that adds horizontal scan-line jitter and brightness spikes.
 
   ```ts
   function createScanCorruptionPass(): ShaderPass;
   ```
-- **`createStereoRenderer`** *(function)* — Create a StereoRenderer for the given mode.
+  - returns — A ShaderPass whose `uIntensity` (default `0.5`) uniform controls the corruption amplitude.
+- **`createStereoRenderer`** *(function)* — Create a stereo renderer that wraps the given WebGL2 renderer in an anaglyph or side-by-side stereo effect.
 
   ```ts
   function createStereoRenderer(renderer: THREE.WebGLRenderer, mode: StereoMode, { width, height }?: StereoSizeOptions): StereoRenderer;
   ```
+  - `renderer` — The WebGL2 renderer to wrap.
+  - `mode` — Stereo mode: `anaglyph`, `stereo`, or `off` (passthrough).
+  - `options` — Optional viewport-size override.
+  - `options.width` — Override width for the stereo-effect render target.
+  - `options.height` — Override height for the stereo-effect render target.
+  - returns — A StereoRenderer. Call `render(scene, camera)` to render the scene through the selected stereo effect.
 - **`createSun`** *(function)* — Warm shadow-casting `DirectionalLight` with a sensibly-sized orthographic.
 
   ```ts
@@ -1301,33 +1353,33 @@ position, and shadow tuning.
   ```ts
   function vector3ToTuple(v: THREE.Vector3): Vec3Tuple;
   ```
-- **`GradeShader`** *(const)* — Raw ShaderPass shader definition for colour grading: tint, contrast, saturation, vignette, grain, and radial chromatic aberration.
+- **`GradeShader`** *(const)* — Raw shader definition for the colour-grade pass: tint, contrast, saturation, vignette, seeded grain, and radial chromatic aberration operating in linear HDR space.
 - **`LIGHTING_PRESETS`** *(const)* — The five built-in looks — `dramatic`, `studio`, `soft`, `neon`, `sunset` — as data, mergeable with custom presets via LightingRigOptions.presets.
 - **`CameraBounds`** *(interface)* — Axis-aligned box the camera position is clamped into.
 - **`CameraController`** *(interface)* — Multi-mode camera state machine driven by `update(ctx)` once per frame.
 - **`CameraControllerOptions`** *(interface)* — Tuning for createCameraController: easing stiffnesses, fly-to arrival radius, and position bounds.
 - **`CameraMode`** *(type)* — Which behavior currently drives the camera: idle, easing to a target, tracking an object, or anchored to a rig.
 - **`CameraTarget`** *(interface)* — A serializable camera intent: where to stand and what to look at.
-- **`CinematicLutOptions`** *(interface)* — Options for createCinematicLUT.
+- **`CinematicLutOptions`** *(interface)* — Options for createCinematicLUT: contrast S-curve strength, split-tone (teal/amber) intensity, and saturation multiplier.
 - **`ColorCurve`** *(type)* — [t, color] stops; color as css string or [r,g,b] in 0..1.
-- **`ComposerHandle`** *(interface)* — Handle returned by createComposer, exposing the EffectComposer and helper methods.
-- **`ComposerOptions`** *(interface)* — Options for createComposer.
+- **`ComposerHandle`** *(interface)* — Handle returned by createComposer, exposing the EffectComposer, the optional UnrealBloomPass, the OutputPass, and helper methods for resizing and inserting passes.
+- **`ComposerOptions`** *(interface)* — Options for createComposer: renderer, scene, camera, output dimensions, and optional bloom configuration.
 - **`DofPass`** *(interface)* — Combined depth-of-field and chromatic-aberration pass.
-- **`DofPassOptions`** *(interface)* — Options for createDofPass.
+- **`DofPassOptions`** *(interface)* — Options for createDofPass: focal distance, blur range, max blur radius, chromatic-aberration strength, and camera clip planes.
 - **`Emitter`** *(interface)* — A live particle system.
 - **`EmitterOptions`** *(interface)* — Options for createEmitter and createGpuEmitter: capacity, emission rate/bursts, lifetime, shape, motion, and appearance curves.
 - **`EmitterShape`** *(type)* — Spawn volume for particles: `point`, `sphere` (optionally shell-only), `box`, `cone` (angle in radians), or `disc`.
 - **`EnvironmentOptions`** *(interface)* — Options for applyEnvironment: IBL `intensity` and an optional custom environment scene.
-- **`FilmGrainOptions`** *(interface)* — Options for createFilmGrainPass.
+- **`FilmGrainOptions`** *(interface)* — Options for createFilmGrainPass: grain intensity, luminance-only blend, and desaturation amount.
 - **`FlyToOptions`** *(interface)* — Per-flight options for CameraController.flyTo: speed scale, target `fov`, and an arrival callback.
 - **`FollowCameraOptions`** *(interface)* — Options for createFollowCamera: required local-frame `offset`, look-ahead point, and position/rotation damping stiffness.
-- **`GodRaysPass`** *(interface)* — Volumetric light-shaft pass with per-frame world-space light tracking and optional occlusion buffer.
+- **`GodRaysPass`** *(interface)* — A ShaderPass extended with GodRaysPass.updateFromLight and GodRaysPass.setOcclusionTexture for per-frame world-space light tracking and optional occlusion-buffer binding.
 - **`GpuEmitterOptions`** *(type)* — Options for createGpuEmitter — `EmitterOptions` minus the CPU-only rate/burst controls (GPU particles recycle continuously).
 - **`GradePass`** *(interface)* — Colour-grade pass with a setTime() method to animate seeded grain.
-- **`GradePassOptions`** *(interface)* — Options for createGradePass.
+- **`GradePassOptions`** *(interface)* — Options for createGradePass: tint colour, contrast, saturation, vignette, grain, and chromatic-aberration strength.
 - **`HemisphereFillOptions`** *(interface)* — Options for createHemisphereFill: sky/ground colors and intensity.
-- **`HudBeamOptions`** *(interface)* — Options for createHudBeamTransition.
-- **`HudBeamTransition`** *(interface)* — Handle returned by createHudBeamTransition with play/tick controls.
+- **`HudBeamOptions`** *(interface)* — Options for createHudBeamTransition: sweep duration, beam width, beam tint colour, and completion callback.
+- **`HudBeamTransition`** *(interface)* — Handle returned by createHudBeamTransition; controls a horizontal beam-sweep transition via HudBeamTransition.play and HudBeamTransition.tick.
 - **`IsoCameraOptions`** *(interface)* — Options for createIsoCamera: vertical `viewSize` in world units, projection `flavor`, and near/far planes.
 - **`IsoFlavor`** *(type)* — Iso projection flavor: `true-iso` tilts atan(1/√2) ≈ 35.26°, `dimetric` uses the game-friendly 30°.
 - **`LightConeOptions`** *(interface)* — Options for createLightCone: beam color and base-radius `spread`.
@@ -1339,14 +1391,14 @@ position, and shadow tuning.
 - **`PathCameraOptions`** *(interface)* — Tuning for createPathCamera: look-around ranges (radians), look smoothing, and travel speed.
 - **`PathCameraSource`** *(interface)* — What a path camera rides: a curve plus its total length.
 - **`PostPipeline`** *(interface)* — Reorderable named-pass pipeline over EffectComposer.
-- **`PostPipelineOptions`** *(interface)* — Options for createPostPipeline.
+- **`PostPipelineOptions`** *(interface)* — Options for createPostPipeline: renderer, scene, camera, viewport dimensions, and optional depth attachment.
 - **`ScalarCurve`** *(type)* — [t, value] stops, t in 0..1 ascending.
 - **`SpawnSample`** *(interface)* — One sampled spawn: position (`px..pz`) and emission direction (`dx..dz`).
 - **`StandardLighting`** *(interface)* — The standard rig's parts.
 - **`StandardLightingOptions`** *(interface)* — Options for setupStandardLighting, grouping the environment, sun, and hemisphere sub-options.
-- **`StereoMode`** *(type)* — Render mode for stereoscopic 3D: anaglyph (red/cyan), side-by-side stereo, or off (passthrough).
-- **`StereoRenderer`** *(interface)* — Renderer wrapper for anaglyph or side-by-side stereo output.
-- **`StereoSizeOptions`** *(interface)* — Optional size override for the stereo effect render target.
+- **`StereoMode`** *(type)* — Render mode for stereoscopic 3D: `anaglyph` (red/cyan glasses), `stereo` (cardboard-style side-by-side), or `off` (passthrough, single render).
+- **`StereoRenderer`** *(interface)* — A renderer wrapper that renders the scene in the selected stereo mode.
+- **`StereoSizeOptions`** *(interface)* — Optional output-size override for the stereo-effect render target.
 - **`SunOptions`** *(interface)* — Options for createSun: color, intensity, position, and shadow map/frustum sizing.
 - **`Vec3Tuple`** *(type)* — A serializable xyz triple — the state-friendly form of a `Vector3`.
 
@@ -1868,204 +1920,389 @@ the path-camera `rig`.
 
 Experimental WebGPU/TSL node post-processing helpers isolated from the WebGL barrel so standard scenes never need to resolve three/webgpu.
 
-- **`createAfterImage`** *(function)* — Wrap an AfterImageNode that blends each frame with a damped copy of the previous one, creating motion-ghost trails.
+- **`createAfterImage`** *(function)* — Blend each frame with a damped copy of itself, producing motion-ghost trails.
 
   ```ts
   function createAfterImage(input: ColorNode, options?: AfterImageOptions): import("three/addons/tsl/display/AfterImageNode.js").default;
   ```
-- **`createAnamorphic`** *(function)* — Wrap an AnamorphicNode that produces horizontal streak lens flares from bright highlights.
+  - `input` — Colour node to process (e.g. scene-pass output).
+  - `options.damp` — Persistence of the previous frame, 0..1. Higher values produce longer trails. Default `0.8`.
+  - returns — An AfterImageNode that keeps an internal history texture and blends frames.
+- **`createAnamorphic`** *(function)* — Create an anamorphic lens-flare node that produces horizontal streaks from bright highlights.
 
   ```ts
   function createAnamorphic(input: ColorNode, options?: AnamorphicOptions): import("three/addons/tsl/display/AnamorphicNode.js").default;
   ```
-- **`createAo`** *(function)* — Wrap a GTAONode that computes screen-space ambient occlusion from viewZ and normal, producing contact shadows in creases.
+  - `input` — Colour node to process (post-bloom or scene output).
+  - `options.threshold` — Luminance threshold above which pixels streak. Default `1.4`.
+  - `options.scale` — Horizontal stretch of the streak. Default `5`.
+  - `options.samples` — Number of taps along the streak; higher = smoother but costlier. Default `32`.
+  - `options.resolutionScale` — Fraction of full resolution for the streak buffer. Default `1`.
+  - returns — An AnamorphicNode whose output should be added onto the scene colour.
+- **`createAo`** *(function)* — Compute screen-space ambient occlusion (GTAO) to produce contact shadows in creases and corners.
 
   ```ts
   function createAo(viewZ: ColorNode, normal: ColorNode, camera: THREE.Camera): import("three/addons/tsl/display/GTAONode.js").default;
   ```
-- **`createBloom`** *(function)* — Wrap a BloomNode that spreads light from bright pixels for a glow effect.
+  - `viewZ` — View-space Z-depth node from the scene pass (scenePass.getViewZNode()).
+  - `normal` — View-space normal node from the scene pass.
+  - `camera` — The active camera.
+  - returns — A GTAONode that outputs an occlusion mask. Multiply onto the scene colour.
+- **`createBloom`** *(function)* — Spread light from bright pixels for a bloom glow effect.
 
   ```ts
   function createBloom(input: ColorNode, options?: BloomOptions): import("three/addons/tsl/display/BloomNode.js").default;
   ```
-- **`createBloomEmissive`** *(function)* — Bloom only the emissive PBR channel by extracting it from an MRT scene pass, leaving lit surfaces unwashed.
+  - `input` — Colour node to bloom (e.g. scene-pass output).
+  - `options.strength` — Bloom intensity. Default `1`.
+  - `options.radius` — Bloom spread radius. Default `0`.
+  - `options.threshold` — Luminance threshold; only pixels above this value bloom. Default `0`.
+  - returns — A BloomNode producing the bloom contribution. Compose with `input.add(createBloom(...))`.
+- **`createBloomEmissive`** *(function)* — Bloom only the emissive PBR contribution from an MRT scene pass, leaving lit surfaces unwashed.
 
   ```ts
   function createBloomEmissive(scenePass: PassNode, options?: BloomEmissiveOptions): {
   ```
+  - `scenePass` — A PassNode configured with an MRT exposing an `emissive` channel.
+  - `options.strength` — Bloom intensity. Default `2.5`.
+  - `options.radius` — Bloom spread radius. Default `0.5`.
+  - `options.threshold` — Luminance threshold for blooming. Default `0`.
+  - returns — An object `{ output, bloom, result }`. Use `result` (= output + bloom) as the output node.
 - **`createBloomSelective`** *(function)* — Bloom only objects tagged via an MRT bloomIntensity channel.
 
   ```ts
   function createBloomSelective(scenePass: PassNode, options?: BloomSelectiveOptions): {
   ```
-- **`createChromaticAberration`** *(function)* — Wrap a ChromaticAberrationNode that splits R/G/B radially from a configurable centre for a lens-fringing look.
+  - `scenePass` — A PassNode configured with an MRT exposing `output` and `bloomIntensity` channels.
+  - `options.strength` — Bloom intensity. Default `1`.
+  - `options.radius` — Bloom spread radius. Default `0`.
+  - `options.threshold` — Luminance threshold for blooming. Default `0`.
+  - returns — An object `{ output, bloom, result }`. Use `result` (= output + bloom) as the output node.
+- **`createChromaticAberration`** *(function)* — Split the RGB channels radially from a configurable centre point for a lens-fringing look.
 
   ```ts
   function createChromaticAberration(input: ColorNode, options?: ChromaticAberrationOptions): import("three/addons/tsl/display/ChromaticAberrationNode.js").default;
   ```
-- **`createDifference`** *(function)* — Increase saturation where the current frame differs from the previous one, highlighting motion.
+  - `input` — Colour node to process (typically display-space output).
+  - `options.strength` — Fringe magnitude. Default `1`.
+  - `options.center` — Screen-space UV centre of the radial split. Default `new THREE.Vector2(0.5, 0.5)`.
+  - `options.scale` — Per-channel scale falloff factor. Default `1.2`.
+  - returns — A ChromaticAberrationNode producing the distorted colour.
+- **`createDifference`** *(function)* — Increase saturation where the current frame differs from the previous one, highlighting motion regions.
 
   ```ts
   function createDifference(scenePass: PassNode, options?: DifferenceOptions): import("three/webgpu").Node<"vec3">;
   ```
-- **`createDof`** *(function)* — Wrap a DepthOfFieldNode that applies bokeh-blur by distance from the focus plane.
+  - `scenePass` — The scene PassNode (from createScenePass(...).pass), used to read both current and retained previous-frame texture nodes.
+  - `options.gain` — Multiplier on the per-pixel difference luminance before clamping. Default `1000`.
+  - `options.maxSaturation` — Maximum extra saturation applied to moving regions. Default `3`.
+  - returns — A colour node with motion-highlighted saturation, to use as the output.
+- **`createDof`** *(function)* — Apply bokeh depth-of-field blur based on each fragment's distance from the focus plane.
 
   ```ts
   function createDof(input: ColorNode, viewZ: ColorNode, options?: DofOptions): import("three/addons/tsl/display/DepthOfFieldNode.js").default;
   ```
-- **`createDofBasic`** *(function)* — Cheap DOF: box-blur the colour input, then lerp sharp<->blurred by smoothstep over view-Z distance to the focus point.
+  - `input` — Colour node to blur.
+  - `viewZ` — View-space Z-depth node from the scene pass (scenePass.getViewZNode()).
+  - `options.focusDistance` — World-space distance to the focus plane. Default `10`.
+  - `options.focalLength` — Focal length controlling the blur falloff rate. Default `1`.
+  - `options.bokehScale` — Magnitude of the bokeh blur. Default `1`.
+  - returns — A DepthOfFieldNode producing the defocused colour.
+- **`createDofBasic`** *(function)* — Cheap depth-of-field: box-blur the colour input, then lerp between sharp and blurred by smoothstep over view-Z distance to the focus point.
 
   ```ts
   function createDofBasic(input: Node<'vec4'>, viewZ: Node<'float'>, options?: DofBasicOptions): Node<"vec4">;
   ```
-- **`createFxaa`** *(function)* — Wrap an FXAANode that applies fast-approximate anti-aliasing on the final image.
+  - `input` — Colour node (vec4) to blur.
+  - `viewZ` — View-space Z-depth node (float) from the scene pass.
+  - `options.focusPoint` — View-space focus point; fragments near this Z stay sharp. Default `new THREE.Vector3()`.
+  - `options.minDistance` — Distance from focus Z where blur begins. Default `1`.
+  - `options.maxDistance` — Distance from focus Z where blur is maximal. Default `3`.
+  - `options.blurSize` — Box-blur kernel size in pixels. Default `2`.
+  - `options.blurSpread` — Sample spread for the box blur. Default `4`.
+  - returns — A colour node blending the sharp and box-blurred inputs.
+- **`createFxaa`** *(function)* — Apply fast-approximate anti-aliasing (FXAA) to the final image.
 
   ```ts
   function createFxaa(input: ColorNode): import("three/addons/tsl/display/FXAANode.js").default;
   ```
-- **`createGodrays`** *(function)* — Wrap a GodraysNode that ray-marches the depth buffer from a directional or point light to produce volumetric light shafts.
+  - `input` — Colour node to anti-alias (typically display-space renderOutput).
+  - returns — An FXAANode producing the anti-aliased output.
+- **`createGodrays`** *(function)* — Ray-march the depth buffer from a directional or point light to produce volumetric light shafts (god rays).
 
   ```ts
   function createGodrays(depthNode: TextureNode, camera: Camera, light: DirectionalLight | PointLight, options?: GodraysOptions): import("three/addons/tsl/display/GodraysNode.js").default;
   ```
-- **`createLensflare`** *(function)* — Wrap a LensflareNode that renders ghost reflections and halo from bright spots.
+  - `depthNode` — Scene-pass depth-texture node (scenePass.getTextureNode('depth')).
+  - `camera` — The active camera.
+  - `light` — The light source casting rays (DirectionalLight or PointLight).
+  - `options.raymarchSteps` — Number of raymarch steps; higher = smoother but costlier.
+  - `options.density` — Scattering density along each ray.
+  - `options.maxDensity` — Maximum scattering-density clamp.
+  - `options.distanceAttenuation` — Distance-based attenuation of the light contribution.
+  - `options.resolutionScale` — Fraction of full resolution for the raymarch buffer.
+  - returns — A GodraysNode whose texture should be composited over the scene colour.
+- **`createLensflare`** *(function)* — Render ghost reflections and halo from bright spots in the input.
 
   ```ts
   function createLensflare(input: Node, options?: LensflareOptions): import("three/addons/tsl/display/LensflareNode.js").default;
   ```
-- **`createLut`** *(function)* — Wrap a Lut3DNode that remaps colours through a loaded 3D LUT (.cube/.3dl/.png).
+  - `input` — Colour node (typically the bloom of an emissive MRT channel).
+  - `options.ghostTint` — Tint colour for ghost reflections as a TSL Node.
+  - `options.threshold` — Luminance threshold for flare generation.
+  - `options.ghostSamples` — Number of ghost samples along the flare axis.
+  - `options.ghostSpacing` — Spacing between successive ghost samples.
+  - `options.ghostAttenuationFactor` — Attenuation factor for each successive ghost.
+  - `options.downSampleRatio` — Fraction of full resolution for the flare accumulation buffer.
+  - returns — A LensflareNode whose output should be added onto the scene colour.
+- **`createLut`** *(function)* — Remap colours through a loaded 3D LUT (.cube / .3dl / .png) for colour grading.
 
   ```ts
   function createLut(input: ColorNode, options: LutOptions): import("three/addons/tsl/display/Lut3DNode.js").default;
   ```
-- **`createMasking`** *(function)* — Stencil-style masking: composite textures into screen regions covered by helper mask scenes, using each pass's alpha.
+  - `input` — Colour node to grade, typically `renderOutput(scenePass)` so grading happens in display space.
+  - `options.lut` — The loaded 3D LUT as a Data3DTexture (e.g. from LUTCubeLoader().load(...).texture3D).
+  - `options.intensity` — Blend between original and graded colour, 0..1. Default `1`.
+  - returns — A Lut3DNode producing the graded colour.
+- **`createMasking`** *(function)* — Composite textures into screen regions covered by helper mask scenes, using each pass's rendered alpha as the mask.
 
   ```ts
   function createMasking(base: Node<'vec4'>, camera: THREE.Camera, layers: MaskLayer[]): Node;
   ```
-- **`createMotionBlur`** *(function)* — Wrap a motionBlur node that smears colour along each pixel's screen-space velocity vector.
+  - `base` — The base colour node to composite over.
+  - `camera` — The active camera used to render each mask scene.
+  - `layers` — Array of MaskLayer entries. Each layer's scene is rendered to produce an alpha mask, then the layer's texture is mixed in where the mask is opaque.
+  - returns — A colour node with all layers composited in order.
+- **`createMotionBlur`** *(function)* — Smear colour along each pixel's screen-space velocity vector for a motion-blur effect.
 
   ```ts
   function createMotionBlur(input: Node, velocityNode: Node, options?: MotionBlurOptions): Node<"vec4">;
   ```
-- **`createOutline`** *(function)* — Wrap an OutlineNode that renders edge highlights around selected objects via a separate selection pass.
+  - `input` — Colour node to blur.
+  - `velocityNode` — Screen-space velocity node, typically `scenePass.getTextureNode('velocity').mul(amount)`.
+  - `options.numSamples` — Number of samples along the velocity vector; higher = smoother but costlier.
+  - returns — A motionBlur node producing the blurred colour.
+- **`createOutline`** *(function)* — Render edge highlights around selected objects using a separate selection pass and edge detection.
 
   ```ts
   function createOutline(scene: THREE.Scene, camera: THREE.Camera, options?: OutlineOptions): import("three/addons/tsl/display/OutlineNode.js").default;
   ```
-- **`createPixelationPass`** *(function)* — Wrap a pixelationPass PassNode that renders the scene into chunky pixels with optional normal/depth edge outlines.
+  - `scene` — The scene containing objects to outline.
+  - `camera` — The active camera.
+  - `options` — Outline parameters matching OutlineNodeParams.
+  - returns — An OutlineNode whose output should be composited over the scene colour.
+- **`createPixelationPass`** *(function)* — Render the scene into chunky pixel blocks with optional normal-discontinuity and depth-discontinuity edge outlines.
 
   ```ts
   function createPixelationPass(scene: THREE.Scene, camera: THREE.Camera, options?: PixelOptions): import("three/addons/tsl/display/PixelationPassNode.js").default;
   ```
-- **`createRadialBlur`** *(function)* — Wrap a radialBlur node that streaks the image outward from centre for a speed / hyperspace look.
+  - `scene` — The scene to render.
+  - `camera` — The active camera.
+  - `options.pixelSize` — Size of each output pixel block in device pixels. Default `6`.
+  - `options.normalEdgeStrength` — Strength of normal-discontinuity edge darkening. Default `0.3`.
+  - `options.depthEdgeStrength` — Strength of depth-discontinuity edge darkening. Default `0.4`.
+  - returns — A PassNode producing the pixelated output. Use this INSTEAD of a plain scene pass.
+- **`createRadialBlur`** *(function)* — Streak the image outward from centre for a speed / hyperspace zoom-blur effect.
 
   ```ts
   function createRadialBlur(input: ColorNode, options?: RadialBlurOptions): import("three/webgpu").Node;
   ```
-- **`createRenderPipeline`** *(function)* — Wrap a composed output node in a RenderPipeline instance.
+  - `input` — Colour node to blur.
+  - `options.weight` — Per-sample weight contribution. Default `0.9`.
+  - `options.decay` — Per-sample decay falloff. Default `0.95`.
+  - `options.exposure` — Exposure multiplier on the accumulated samples. Default `5`.
+  - `options.count` — Number of samples along the radial direction. Default `32`.
+  - returns — A radialBlur node producing the zoom-streaked output.
+- **`createRenderPipeline`** *(function)* — Wrap a composed output node in a RenderPipeline instance ready to render each frame.
 
   ```ts
   function createRenderPipeline(renderer: Renderer, outputNode: Node): RenderPipeline;
   ```
-- **`createRetroPass`** *(function)* — Wrap a retroPass PassNode that emulates 5th-gen console rendering: low resolution, vertex snapping, and affine texture distortion.
+  - `renderer` — The WebGPU renderer.
+  - `outputNode` — The composed TSL output node (the complete post-processing chain).
+  - returns — A RenderPipeline. Drive it from the animation loop with `pipeline.render()` instead of `renderer.render(scene, camera)`. After runtime reassignment of `.outputNode`, set `.needsUpdate = true`.
+- **`createRetroPass`** *(function)* — Render the scene in a retro 5th-gen console style: low resolution, vertex snapping, and optional affine (perspective-incorrect) texture distortion.
 
   ```ts
   function createRetroPass(scene: THREE.Scene, camera: THREE.Camera, options?: RetroOptions): import("three/addons/tsl/display/RetroPassNode.js").default;
   ```
-- **`createScenePass`** *(function)* — Create a basic colour-only scene PassNode returning targets: color, viewZ, and normal.
+  - `scene` — The scene to render.
+  - `camera` — The active camera.
+  - `options.affineDistortion` — Optional TSL node controlling affine texture distortion. Pass null to disable.
+  - `options.filterTextures` — Whether textures use bilinear filtering (true) or nearest (false, more authentic).
+  - returns — A PassNode producing the retro-styled output. Use this INSTEAD of a plain scene pass.
+- **`createScenePass`** *(function)* — Create a basic colour-only scene PassNode returning colour, viewZ, and normal nodes.
 
   ```ts
   function createScenePass(scene: THREE.Scene, camera: THREE.Camera): ScenePassTargets;
   ```
-- **`createScenePassEmissive`** *(function)* — Create a scene PassNode exposing the emissive PBR contribution as its own MRT channel for emissive-only bloom.
+  - `scene` — The scene to render.
+  - `camera` — The active camera.
+  - returns — A ScenePassTargets with `pass` (the PassNode), `color` (scene output texture), `viewZ` (linear depth), and `normal` (view-space normals).
+- **`createScenePassEmissive`** *(function)* — Create a scene PassNode exposing the emissive PBR contribution as its own MRT channel.
 
   ```ts
   function createScenePassEmissive(scene: THREE.Scene, camera: THREE.Camera): import("three/webgpu").PassNode;
   ```
-- **`createScenePassMRT`** *(function)* — Create a scene PassNode with an MRT layout exposing a normal buffer for geometry-aware effects (AO, SSR, SSGI, SSS, TRAA).
+  - `scene` — The scene to render.
+  - `camera` — The active camera.
+  - returns — A PassNode with an `output` colour attachment and an `emissive` channel Narrow the emissive attachment to a byte texture via `scenePass.getTexture('emissive').type = THREE.UnsignedByteType` to save bandwidth.
+- **`createScenePassMRT`** *(function)* — Create a scene PassNode with an MRT layout exposing a view-space normal buffer alongside colour.
 
   ```ts
   function createScenePassMRT(scene: THREE.Scene, camera: THREE.Camera): ScenePassTargets;
   ```
-- **`createScenePassSSR`** *(function)* — Create a scene PassNode with an MRT layout encoding view normals to colour and packing metalness/roughness into a single attachment, for screen-space reflections.
+  - `scene` — The scene to render.
+  - `camera` — The active camera.
+  - returns — A ScenePassTargets with `pass`, `color`, `viewZ`, and a `normal` node from the MRT normal attachment.
+- **`createScenePassSSR`** *(function)* — Create a scene PassNode with an MRT layout encoding view normals to colour and packing metalness with roughness, for screen-space reflections.
 
   ```ts
   function createScenePassSSR(scene: THREE.Scene, camera: THREE.Camera): import("three/webgpu").PassNode;
   ```
-- **`createScenePassVelocity`** *(function)* — Create a scene PassNode exposing a per-pixel screen-space velocity MRT channel for motion blur and TRAA.
+  - `scene` — The scene to render.
+  - `camera` — The active camera.
+  - returns — A PassNode with `output`, `normal` (decoded via `colorToDirection()`), and `metalrough` (packed metalness.r + roughness.g) attachments.
+- **`createScenePassVelocity`** *(function)* — Create a scene PassNode exposing a per-pixel screen-space velocity MRT channel.
 
   ```ts
   function createScenePassVelocity(scene: THREE.Scene, camera: THREE.Camera): import("three/webgpu").PassNode;
   ```
-- **`createSmaa`** *(function)* — Wrap an SMAANode that applies subpixel morphological anti-aliasing with higher-quality edges than FXAA.
+  - `scene` — The scene to render.
+  - `camera` — The active camera.
+  - returns — A PassNode with an `output` colour attachment and a `velocity` channel. Read velocity via `scenePass.getTextureNode('velocity')`.
+- **`createSmaa`** *(function)* — Apply subpixel morphological anti-aliasing (SMAA) for higher-quality edge smoothing than FXAA.
 
   ```ts
   function createSmaa(input: ColorNode): import("three/addons/tsl/display/SMAANode.js").SMAANode;
   ```
-- **`createSobel`** *(function)* — Wrap a SobelOperatorNode that detects edges via the Sobel gradient operator.
+  - `input` — Colour node to anti-alias.
+  - returns — An SMAANode producing the anti-aliased output.
+- **`createSobel`** *(function)* — Detect edges in the input using the Sobel 3x3 gradient operator.
 
   ```ts
   function createSobel(input: ColorNode): import("three/addons/tsl/display/SobelOperatorNode.js").default;
   ```
-- **`createSsaaPass`** *(function)* — Wrap an ssaaPass PassNode that renders the scene at 2^sampleLevel jittered subpixel offsets and averages them for reference-quality anti-aliasing.
+  - `input` — Colour node to process (typically display-space renderOutput).
+  - returns — A SobelOperatorNode producing an edge-highlighted output.
+- **`createSsaaPass`** *(function)* — Render the scene at 2^sampleLevel jittered subpixel offsets and average them for reference-quality supersampling anti-aliasing.
 
   ```ts
   function createSsaaPass(scene: THREE.Scene, camera: THREE.Camera, options?: SsaaOptions): import("three/addons/tsl/display/SSAAPassNode.js").default;
   ```
-- **`createSsgi`** *(function)* — Wrap an SSGINode that ray-marches the depth/normal buffers for one bounce of indirect light plus screen-space AO.
+  - `scene` — The scene to render.
+  - `camera` — The active camera.
+  - `options.sampleLevel` — Sample-count exponent (0..5); level 4 = 16 samples.
+  - `options.unbiased` — Distribute sample weights to avoid bias toward the centre sample.
+  - returns — A PassNode producing the SSAA output. Use this INSTEAD of a plain scene pass.
+- **`createSsgi`** *(function)* — Ray-march the depth and normal buffers to add one bounce of indirect light plus screen-space ambient occlusion.
 
   ```ts
   function createSsgi(beautyNode: Node, depthNode: Node, normalNode: Node, camera: PerspectiveCamera, options?: SsgiOptions): import("three/addons/tsl/display/SSGINode.js").default;
   ```
-- **`createSsr`** *(function)* — Wrap an SSRNode that ray-marches the depth buffer for glossy screen-space reflections.
+  - `beautyNode` — The lit scene colour node.
+  - `depthNode` — The depth node from the scene pass.
+  - `normalNode` — The decoded view-space normal node.
+  - `camera` — The active camera (must be a PerspectiveCamera).
+  - `options.sliceCount` — Number of slices for the multi-slice hemisphere raymarch.
+  - `options.stepCount` — Steps per slice.
+  - `options.aoIntensity` — Ambient occlusion contribution strength.
+  - `options.giIntensity` — Indirect-light contribution strength.
+  - `options.radius` — Ray-march radius in world units.
+  - `options.useScreenSpaceSampling` — Sample screen-space neighbours instead of reprojection.
+  - `options.expFactor` — Exponential distance-weighting factor.
+  - `options.thickness` — Surface-thickness heuristic to reduce self-occlusion.
+  - `options.useLinearThickness` — Whether thickness is in linear (vs logarithmic) space.
+  - `options.backfaceLighting` — How much back-facing geometry contributes to indirect light.
+  - `options.useTemporalFiltering` — Enable temporal reprojection to reduce noise across frames.
+  - returns — An SSGINode producing the GI + AO contribution.
+- **`createSsr`** *(function)* — Ray-march the depth buffer to compute glossy screen-space reflections off on-screen geometry.
 
   ```ts
   function createSsr(colorNode: Node, depthNode: Node, normalNode: Node, metalness: Node, roughness: Node, camera: Camera, options?: SsrOptions): import("three/addons/tsl/display/SSRNode.js").default;
   ```
-- **`createSss`** *(function)* — Wrap an SSSNode that approximates subsurface scattering by ray-marching shadow depth toward the main directional light.
+  - `colorNode` — The lit scene colour node.
+  - `depthNode` — The depth node from the scene pass.
+  - `normalNode` — The decoded view-space normal node (colorToDirection of the normal MRT channel).
+  - `metalness` — The metalness channel node (from the `metalrough` MRT attachment .r).
+  - `roughness` — The roughness channel node (from the `metalrough` MRT attachment .g).
+  - `camera` — The active camera.
+  - `options.maxDistance` — Maximum ray-march distance in world units.
+  - `options.thickness` — Surface-thickness heuristic to avoid self-intersection.
+  - `options.opacity` — Reflection-opacity blend factor.
+  - `options.quality` — Ray-march quality level (0 = lowest, 1 = highest).
+  - `options.blurQuality` — Reflection blur quality level.
+  - `options.resolutionScale` — Fraction of full resolution for the reflection buffer.
+  - returns — An SSRNode whose `.rgb` channel should be composited over the scene colour.
+- **`createSss`** *(function)* — Approximate subsurface scattering by ray-marching shadow depth toward the main directional light, simulating light bleeding through thin translucent surfaces (skin, wax, leaves).
 
   ```ts
   function createSss(depthNode: TextureNode, camera: Camera, mainLight: DirectionalLight, options?: SssOptions): import("three/addons/tsl/display/SSSNode.js").default;
   ```
-- **`createTraa`** *(function)* — Wrap a TRAANode that jitters the camera each frame and blends reprojected history via per-pixel velocity for sub-pixel anti-aliasing and stochastic denoising.
+  - `depthNode` — The prepass depth-texture node.
+  - `camera` — The active camera.
+  - `mainLight` — The primary DirectionalLight driving the scattering direction.
+  - `options.maxDistance` — Maximum ray-march distance from the surface.
+  - `options.thickness` — Surface-thickness heuristic.
+  - `options.shadowIntensity` — Intensity of the scattering shadow term.
+  - `options.quality` — Ray-march quality level.
+  - `options.resolutionScale` — Fraction of full resolution for the scattering buffer.
+  - `options.useTemporalFiltering` — Enable temporal reprojection to reduce noise.
+  - returns — An SSSNode returning a scattering mask in its `.r` channel. Add the term into the lit colour.
+- **`createTraa`** *(function)* — Apply temporal reprojection anti-aliasing: jitter the camera each frame and blend reprojected history via per-pixel screen-space velocity.
 
   ```ts
   function createTraa(beautyNode: Node, depthNode: TextureNode, velocityNode: TextureNode, camera: Camera, options?: TraaOptions): import("three/addons/tsl/display/TRAANode.js").default;
   ```
-- **`createTransition`** *(function)* — Wrap a TransitionNode that cross-fades two scene pass colour nodes, optionally masked by a wipe texture.
+  - `beautyNode` — The colour to resolve (typically the composited GI/SSS output).
+  - `depthNode` — The depth-texture node from the scene pass.
+  - `velocityNode` — The velocity-texture node from the scene pass (see createScenePassVelocity).
+  - `camera` — The active camera.
+  - `options.depthThreshold` — Depth-discontinuity threshold for history rejection.
+  - `options.edgeDepthDiff` — Edge-depth difference threshold.
+  - `options.maxVelocityLength` — Maximum per-pixel velocity length clamp.
+  - `options.useSubpixelCorrection` — Enable subpixel correction for finer detail.
+  - returns — A TRAANode producing the resolved output.
+- **`createTransition`** *(function)* — Cross-fade between two scene-pass colour nodes, optionally masked by a wipe texture for directional transitions (wipes, dissolves).
 
   ```ts
   function createTransition(passA: Node, passB: Node, mixTexture: Node, options?: TransitionOptions): import("three/addons/tsl/display/TransitionNode.js").default;
   ```
+  - `passA` — Colour node for the first scene (starting state).
+  - `passB` — Colour node for the second scene (ending state).
+  - `mixTexture` — Wipe-pattern texture node. A plain white texture produces a linear cross-fade.
+  - `options.mixRatio` — Blend factor: 0 = fully passA, 1 = fully passB. Default `0`.
+  - `options.threshold` — Edge softness of the textured wipe. Default `0.1`.
+  - `options.useTexture` — Blend between textured wipe (1) and plain linear cross-fade (0). Default `1`.
+  - returns — A TransitionNode producing the blended colour, to use as the output.
 - **`createPostProcessing`** *(const)* **deprecated** — Back-compat alias of `createRenderPipeline`.
-- **`AfterImageOptions`** *(interface)* — Options for createAfterImage.
-- **`AnamorphicOptions`** *(interface)* — Options for createAnamorphic.
-- **`BloomEmissiveOptions`** *(interface)* — Options for createBloomEmissive.
-- **`BloomOptions`** *(interface)* — Options for createBloom.
-- **`BloomSelectiveOptions`** *(interface)* — Options for createBloomSelective.
-- **`ChromaticAberrationOptions`** *(interface)* — Options for createChromaticAberration.
-- **`ColorEffect`** *(type)* — Generic shape for an effect factory: takes a colour input node and optional options, returns the processed colour node.
+- **`AfterImageOptions`** *(interface)* — Options for createAfterImage: per-frame persistence dampening.
+- **`AnamorphicOptions`** *(interface)* — Options for createAnamorphic: luminance threshold, streak stretch, tap count, and resolution scale.
+- **`BloomEmissiveOptions`** *(interface)* — Options for createBloomEmissive: bloom strength, radius, and luminance threshold.
+- **`BloomOptions`** *(interface)* — Options for createBloom: bloom strength, radius, and luminance threshold.
+- **`BloomSelectiveOptions`** *(interface)* — Options for createBloomSelective: bloom strength, radius, and luminance threshold.
+- **`ChromaticAberrationOptions`** *(interface)* — Options for createChromaticAberration: fringe magnitude, radial centre, and per-channel scale falloff.
+- **`ColorEffect`** *(type)* — Generic shape for an effect factory: accepts a colour input node and optional options, returns the processed colour node.
 - **`ColorNode`** *(type)* — A TSL node carrying colour (vec4).
-- **`DifferenceOptions`** *(interface)* — Options for createDifference.
-- **`DofBasicOptions`** *(interface)* — Options for createDofBasic.
-- **`DofOptions`** *(interface)* — Options for createDof.
-- **`GodraysOptions`** *(interface)* — Options for createGodrays.
-- **`LensflareOptions`** *(interface)* — Options for createLensflare.
-- **`LutOptions`** *(interface)* — Options for createLut.
-- **`MaskLayer`** *(interface)* — A scene whose rendered alpha defines a mask region, plus the texture to composite there.
-- **`MotionBlurOptions`** *(interface)* — Options for createMotionBlur.
-- **`OutlineOptions`** *(type)* — Options for createOutline, mirroring OutlineNodeParams from three.js.
-- **`PixelOptions`** *(interface)* — Options for createPixelationPass.
-- **`RadialBlurOptions`** *(interface)* — Options for createRadialBlur.
-- **`RetroOptions`** *(interface)* — Options for createRetroPass.
+- **`DifferenceOptions`** *(interface)* — Options for createDifference: per-pixel difference gain and max saturation boost.
+- **`DofBasicOptions`** *(interface)* — Options for createDofBasic: focus point, blur distance range, box-blur kernel size, and sample spread.
+- **`DofOptions`** *(interface)* — Options for createDof: focus distance, focal length, and bokeh scale.
+- **`GodraysOptions`** *(interface)* — Options for createGodrays: raymarch step count, scattering density, max density, distance attenuation, and resolution scale.
+- **`LensflareOptions`** *(interface)* — Options for createLensflare: ghost tint, luminance threshold, ghost samples/spacing/attenuation, and downsample ratio.
+- **`LutOptions`** *(interface)* — Options for createLut: the loaded 3D LUT texture and blend intensity.
+- **`MaskLayer`** *(interface)* — A mask layer composed of an alpha-emitting scene and the texture to composite where the mask is opaque.
+- **`MotionBlurOptions`** *(interface)* — Options for createMotionBlur: number of velocity samples.
+- **`OutlineOptions`** *(type)* — Options for createOutline, mirroring OutlineNodeParams from three.js (selection, colour, thickness, pulse speed).
+- **`PixelOptions`** *(interface)* — Options for createPixelationPass: pixel block size and normal/depth edge-darkening strength.
+- **`RadialBlurOptions`** *(interface)* — Options for createRadialBlur: sample weight, decay, exposure, and sample count.
+- **`RetroOptions`** *(interface)* — Options for createRetroPass: optional affine-distortion node and texture-filtering toggle.
 - **`ScenePassTargets`** *(interface)* — The set of texture, depth, and normal nodes a scene PassNode can expose.
-- **`SsaaOptions`** *(interface)* — Options for createSsaaPass.
-- **`SsgiOptions`** *(interface)* — Options for createSsgi.
-- **`SsrOptions`** *(interface)* — Options for createSsr.
-- **`SssOptions`** *(interface)* — Options for createSss.
-- **`TraaOptions`** *(interface)* — Options for createTraa.
-- **`TransitionOptions`** *(interface)* — Options for createTransition.
+- **`SsaaOptions`** *(interface)* — Options for createSsaaPass: sample level and unbiased weighting toggle.
+- **`SsgiOptions`** *(interface)* — Options for createSsgi: slice/step counts, AO/GI intensity, radius, screen-space sampling, thickness, backface lighting, and temporal filtering.
+- **`SsrOptions`** *(interface)* — Options for createSsr: max ray distance, thickness, opacity, quality, blur quality, and resolution scale.
+- **`SssOptions`** *(interface)* — Options for createSss: max distance, thickness, shadow intensity, quality, resolution scale, and temporal filtering.
+- **`TraaOptions`** *(interface)* — Options for createTraa: depth threshold, edge depth diff, max velocity, and subpixel correction.
+- **`TransitionOptions`** *(interface)* — Options for createTransition: mix ratio, wipe edge softness, and texture-wipe blend factor.
 
   <details><summary>Example</summary>
 
